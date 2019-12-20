@@ -1,21 +1,21 @@
 package com.bumptech.glide.load.model;
 
 import static com.google.common.truth.Truth.assertThat;
+import static org.junit.Assert.assertThrows;
 import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import android.support.v4.util.Pools.Pool;
+import androidx.core.util.Pools.Pool;
 import com.bumptech.glide.Registry.NoModelLoaderAvailableException;
 import com.bumptech.glide.tests.Util;
 import com.bumptech.glide.util.pool.FactoryPools;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.ExpectedException;
+import org.junit.function.ThrowingRunnable;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
@@ -26,10 +26,8 @@ import org.robolectric.annotation.Config;
 // containsExactly produces a spurious warning.
 @SuppressWarnings("ResultOfMethodCallIgnored")
 @RunWith(RobolectricTestRunner.class)
-@Config(manifest = Config.NONE, sdk = 18)
+@Config(sdk = 18)
 public class MultiModelLoaderFactoryTest {
-  @Rule public final ExpectedException exception = ExpectedException.none();
-
   @Mock private ModelLoaderFactory<String, String> firstFactory;
   @Mock private ModelLoader<String, String> firstModelLoader;
   @Mock private MultiModelLoaderFactory.Factory multiModelLoaderFactory;
@@ -44,8 +42,7 @@ public class MultiModelLoaderFactoryTest {
     MockitoAnnotations.initMocks(this);
     throwableListPool = FactoryPools.threadSafeList();
 
-    multiFactory =
-        new MultiModelLoaderFactory(throwableListPool, multiModelLoaderFactory);
+    multiFactory = new MultiModelLoaderFactory(throwableListPool, multiModelLoaderFactory);
     when(firstFactory.build(eq(multiFactory))).thenReturn(firstModelLoader);
     when(secondFactory.build(eq(multiFactory))).thenReturn(secondModelLoader);
   }
@@ -154,7 +151,7 @@ public class MultiModelLoaderFactoryTest {
 
   @Test
   public void
-  testBuild_withModelClass_returnsMultipleModelLoaders_ofGivenModelClassWithDifferentDataClasses() {
+      testBuild_withModelClass_returnsMultipleModelLoaders_ofGivenModelClassWithDifferentDataClasses() {
     ModelLoader<String, Integer> otherLoader = appendFactoryFor(String.class, Integer.class);
     multiFactory.append(String.class, String.class, firstFactory);
 
@@ -171,7 +168,7 @@ public class MultiModelLoaderFactoryTest {
 
   @Test
   public void
-  testBuild_withModelAndDataClasses_returnsMultipleModelLoaders_ofGivenModelAndDataClasses() {
+      testBuild_withModelAndDataClasses_returnsMultipleModelLoaders_ofGivenModelAndDataClasses() {
     ModelLoader<String, String> otherLoader = appendFactoryFor(String.class, String.class);
     multiFactory.append(String.class, String.class, firstFactory);
 
@@ -183,16 +180,28 @@ public class MultiModelLoaderFactoryTest {
   public void testBuild_withModelAndDataClasses_excludesModelLoadersForOtherDataClasses() {
     multiFactory.append(String.class, String.class, firstFactory);
 
-    exception.expect(NoModelLoaderAvailableException.class);
-    multiFactory.build(String.class, Integer.class);
+    assertThrows(
+        NoModelLoaderAvailableException.class,
+        new ThrowingRunnable() {
+          @Override
+          public void run() throws Throwable {
+            multiFactory.build(String.class, Integer.class);
+          }
+        });
   }
 
   @Test
   public void testBuild_withModelAndDataClasses_excludesModelLoadersForOtherModelClasses() {
     multiFactory.append(String.class, String.class, firstFactory);
 
-    exception.expect(NoModelLoaderAvailableException.class);
-    multiFactory.build(Integer.class, String.class);
+    assertThrows(
+        NoModelLoaderAvailableException.class,
+        new ThrowingRunnable() {
+          @Override
+          public void run() throws Throwable {
+            multiFactory.build(Integer.class, String.class);
+          }
+        });
   }
 
   @Test
@@ -212,15 +221,28 @@ public class MultiModelLoaderFactoryTest {
   @Test
   public void testBuild_withModelAndDataClass_doesNotMatchSubclassesOfModelClass() {
     appendFactoryFor(String.class, Object.class);
-    exception.expect(NoModelLoaderAvailableException.class);
-    multiFactory.build(Object.class, Object.class);
+
+    assertThrows(
+        NoModelLoaderAvailableException.class,
+        new ThrowingRunnable() {
+          @Override
+          public void run() throws Throwable {
+            multiFactory.build(Object.class, Object.class);
+          }
+        });
   }
 
   @Test
   public void testBuild_withModelAndDataClass_doesNotMatchSubclassesOfDataClass() {
     appendFactoryFor(Object.class, String.class);
-    exception.expect(NoModelLoaderAvailableException.class);
-    multiFactory.build(Object.class, Object.class);
+    assertThrows(
+        NoModelLoaderAvailableException.class,
+        new ThrowingRunnable() {
+          @Override
+          public void run() throws Throwable {
+            multiFactory.build(Object.class, Object.class);
+          }
+        });
   }
 
   @Test
@@ -265,8 +287,8 @@ public class MultiModelLoaderFactoryTest {
     assertThat(modelLoaders).containsExactly(third, second, first).inOrder();
   }
 
-  private <X, Y> List<ModelLoader<X, Y>> buildModelLoaders(Class<X> modelClass,
-      Class<Y> dataClass) {
+  private <X, Y> List<ModelLoader<X, Y>> buildModelLoaders(
+      Class<X> modelClass, Class<Y> dataClass) {
     ArgumentCaptor<List<ModelLoader<X, Y>>> captor = Util.cast(ArgumentCaptor.forClass(List.class));
     multiFactory.build(modelClass, dataClass);
     verify(multiModelLoaderFactory).build(captor.capture(), eq(throwableListPool));
@@ -288,7 +310,8 @@ public class MultiModelLoaderFactoryTest {
   private <X, Y> ModelLoader<X, Y> registerFactoryFor(
       Class<X> modelClass, Class<Y> dataClass, boolean append) {
     ModelLoaderFactory<X, Y> factory = mockFactory();
-    @SuppressWarnings("unchecked") ModelLoader<X, Y> loader = mock(ModelLoader.class);
+    @SuppressWarnings("unchecked")
+    ModelLoader<X, Y> loader = mock(ModelLoader.class);
     when(factory.build(eq(multiFactory))).thenReturn(loader);
     if (append) {
       multiFactory.append(modelClass, dataClass, factory);
@@ -303,4 +326,3 @@ public class MultiModelLoaderFactoryTest {
     return mock(ModelLoaderFactory.class);
   }
 }
-

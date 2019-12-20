@@ -23,8 +23,9 @@ import javax.lang.model.util.Elements;
  * Generates a Glide look-alike that acts as the entry point to the generated API
  * (GlideApp.with(...)).
  *
- * <p>>Generated {@code com.bumptech.glide.Glide} look-alikes look like this (note that the name
- * is configurable in {@link com.bumptech.glide.annotation.GlideModule}):
+ * <p>Generated {@code com.bumptech.glide.Glide} look-alikes look like this (note that the name is
+ * configurable in {@link com.bumptech.glide.annotation.GlideModule}):
+ *
  * <pre>
  * <code>
  * public final class GlideApp {
@@ -63,26 +64,19 @@ import javax.lang.model.util.Elements;
  *     return (GeneratedRequestManager) Glide.with(fragment);
  *   }
  *
- *   public static GeneratedRequestManager with(android.support.v4.app.Fragment fragment) {
+ *   public static GeneratedRequestManager with(androidx.fragment.app.Fragment fragment) {
  *     return (GeneratedRequestManager) Glide.with(fragment);
  *   }
  * </code>
  * </pre>
  */
 final class GlideGenerator {
-  private static final String GLIDE_QUALIFIED_NAME =
-      "com.bumptech.glide.Glide";
+  private static final String GLIDE_QUALIFIED_NAME = "com.bumptech.glide.Glide";
 
-  private static final String REQUEST_MANAGER_QUALIFIED_NAME =
-      "com.bumptech.glide.RequestManager";
+  private static final String REQUEST_MANAGER_QUALIFIED_NAME = "com.bumptech.glide.RequestManager";
 
-  private static final String VISIBLE_FOR_TESTING_QUALIFIED_NAME =
-      "android.support.annotation.VisibleForTesting";
-
-  private static final String SUPPRESS_LINT_PACKAGE_NAME =
-      "android.annotation";
-  private static final String SUPPRESS_LINT_CLASS_NAME =
-      "SuppressLint";
+  private static final String SUPPRESS_LINT_PACKAGE_NAME = "android.annotation";
+  private static final String SUPPRESS_LINT_CLASS_NAME = "SuppressLint";
 
   private final ProcessingEnvironment processingEnv;
   private final ProcessorUtil processorUtil;
@@ -111,11 +105,11 @@ final class GlideGenerator {
                 + "\n"
                 + "<p>This class is generated and should not be modified"
                 + "\n"
-                + "@see $T\n", GlideExtension.class, glideType)
+                + "@see $T\n",
+            GlideExtension.class,
+            glideType)
         .addModifiers(Modifier.PUBLIC, Modifier.FINAL)
-        .addMethod(MethodSpec.constructorBuilder()
-            .addModifiers(Modifier.PRIVATE)
-            .build())
+        .addMethod(MethodSpec.constructorBuilder().addModifiers(Modifier.PRIVATE).build())
         .addMethods(
             generateOverridesForGlideMethods(generatedCodePackageName, generatedRequestManager))
         .build();
@@ -123,7 +117,8 @@ final class GlideGenerator {
 
   private List<MethodSpec> generateOverridesForGlideMethods(
       final String generatedCodePackageName, final TypeSpec generatedRequestManager) {
-    return Lists.transform(discoverGlideMethodsToOverride(),
+    return Lists.transform(
+        discoverGlideMethodsToOverride(),
         new Function<ExecutableElement, MethodSpec>() {
           @Override
           public MethodSpec apply(ExecutableElement input) {
@@ -138,7 +133,7 @@ final class GlideGenerator {
   }
 
   private MethodSpec overrideGlideStaticMethod(ExecutableElement methodToOverride) {
-    List<ParameterSpec> parameters = ProcessorUtil.getParameters(methodToOverride);
+    List<ParameterSpec> parameters = processorUtil.getParameters(methodToOverride);
 
     TypeElement element =
         (TypeElement) processingEnv.getTypeUtils().asElement(methodToOverride.getReturnType());
@@ -174,11 +169,10 @@ final class GlideGenerator {
   }
 
   private Builder addReturnAnnotations(Builder builder, ExecutableElement methodToOverride) {
-    String visibleForTestingTypeQualifiedName =
-        processingEnv
-            .getElementUtils()
-            .getTypeElement(VISIBLE_FOR_TESTING_QUALIFIED_NAME)
-            .toString();
+    Elements elements = processingEnv.getElementUtils();
+    TypeElement visibleForTestingTypeElement =
+        elements.getTypeElement(processorUtil.visibleForTesting().reflectionName());
+    String visibleForTestingTypeQualifiedName = visibleForTestingTypeElement.toString();
 
     for (AnnotationMirror mirror : methodToOverride.getAnnotationMirrors()) {
       builder.addAnnotation(AnnotationSpec.get(mirror));
@@ -189,7 +183,7 @@ final class GlideGenerator {
       if (annotationQualifiedName.equals(visibleForTestingTypeQualifiedName)) {
         builder.addAnnotation(
             AnnotationSpec.builder(
-                ClassName.get(SUPPRESS_LINT_PACKAGE_NAME, SUPPRESS_LINT_CLASS_NAME))
+                    ClassName.get(SUPPRESS_LINT_PACKAGE_NAME, SUPPRESS_LINT_CLASS_NAME))
                 .addMember("value", "$S", "VisibleForTests")
                 .build());
       }
@@ -210,20 +204,23 @@ final class GlideGenerator {
       String packageName, TypeSpec generatedRequestManager, ExecutableElement methodToOverride) {
     ClassName generatedRequestManagerClassName =
         ClassName.get(packageName, generatedRequestManager.name);
-    List<ParameterSpec> parameters = ProcessorUtil.getParameters(methodToOverride);
+    List<ParameterSpec> parameters = processorUtil.getParameters(methodToOverride);
     Preconditions.checkArgument(
         parameters.size() == 1, "Expected size of 1, but got %s", methodToOverride);
     ParameterSpec parameter = parameters.iterator().next();
 
-    Builder builder = MethodSpec.methodBuilder(methodToOverride.getSimpleName().toString())
-        .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
-        .addJavadoc(processorUtil.generateSeeMethodJavadoc(methodToOverride))
-        .addParameters(parameters)
-        .returns(generatedRequestManagerClassName)
-        .addStatement("return ($T) $T.$N($L)",
-            generatedRequestManagerClassName, glideType,
-            methodToOverride.getSimpleName().toString(),
-            parameter.name);
+    Builder builder =
+        MethodSpec.methodBuilder(methodToOverride.getSimpleName().toString())
+            .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
+            .addJavadoc(processorUtil.generateSeeMethodJavadoc(methodToOverride))
+            .addParameters(parameters)
+            .returns(generatedRequestManagerClassName)
+            .addStatement(
+                "return ($T) $T.$N($L)",
+                generatedRequestManagerClassName,
+                glideType,
+                methodToOverride.getSimpleName().toString(),
+                parameter.name);
 
     return addReturnAnnotations(builder, methodToOverride).build();
   }

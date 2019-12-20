@@ -8,6 +8,8 @@ import com.google.common.base.Function;
 import com.google.common.base.Joiner;
 import com.google.common.base.Predicate;
 import com.google.common.collect.FluentIterable;
+import com.google.common.collect.ImmutableBiMap;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.squareup.javapoet.AnnotationSpec;
 import com.squareup.javapoet.ClassName;
@@ -24,7 +26,6 @@ import java.lang.annotation.Annotation;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
@@ -48,13 +49,14 @@ import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.type.TypeVariable;
 import javax.lang.model.util.ElementFilter;
+import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 import javax.tools.Diagnostic;
 
-/**
- * Utilities for writing classes and logging.
- */
+/** Utilities for writing classes and logging. */
 final class ProcessorUtil {
+  // TODO: Remove this once we convert Glide's internal classes to AndroidX.
+  private static final boolean REQUIRE_SUPPORT_ANNOTATIONS = false;
   private static final String GLIDE_MODULE_PACKAGE_NAME = "com.bumptech.glide.module";
   private static final String APP_GLIDE_MODULE_SIMPLE_NAME = "AppGlideModule";
   private static final String LIBRARY_GLIDE_MODULE_SIMPLE_NAME = "LibraryGlideModule";
@@ -64,10 +66,20 @@ final class ProcessorUtil {
       GLIDE_MODULE_PACKAGE_NAME + "." + LIBRARY_GLIDE_MODULE_SIMPLE_NAME;
   private static final String COMPILER_PACKAGE_NAME =
       GlideAnnotationProcessor.class.getPackage().getName();
-  private static final ClassName NONNULL_ANNOTATION =
+  private static final ClassName SUPPORT_NONNULL_ANNOTATION =
       ClassName.get("android.support.annotation", "NonNull");
   private static final ClassName JETBRAINS_NOTNULL_ANNOTATION =
       ClassName.get("org.jetbrains.annotations", "NotNull");
+  private static final ClassName ANDROIDX_NONNULL_ANNOTATION =
+      ClassName.get("androidx.annotation", "NonNull");
+  private static final ClassName SUPPORT_CHECK_RESULT_ANNOTATION =
+      ClassName.get("android.support.annotation", "CheckResult");
+  private static final ClassName ANDROIDX_CHECK_RESULT_ANNOTATION =
+      ClassName.get("androidx.annotation", "CheckResult");
+  private static final ClassName SUPPORT_VISIBLE_FOR_TESTING =
+      ClassName.get("android.support.annotation", "VisibleForTesting");
+  private static final ClassName ANDROIDX_VISIBLE_FOR_TESTING =
+      ClassName.get("androidx.annotation", "VisibleForTesting");
 
   private final ProcessingEnvironment processingEnv;
   private final TypeElement appGlideModuleType;
@@ -88,13 +100,13 @@ final class ProcessorUtil {
   }
 
   boolean isAppGlideModule(TypeElement element) {
-    return processingEnv.getTypeUtils().isAssignable(element.asType(),
-        appGlideModuleType.asType());
+    return processingEnv.getTypeUtils().isAssignable(element.asType(), appGlideModuleType.asType());
   }
 
   boolean isLibraryGlideModule(TypeElement element) {
-    return processingEnv.getTypeUtils().isAssignable(element.asType(),
-        libraryGlideModuleType.asType());
+    return processingEnv
+        .getTypeUtils()
+        .isAssignable(element.asType(), libraryGlideModuleType.asType());
   }
 
   boolean isExtension(TypeElement element) {
@@ -102,8 +114,7 @@ final class ProcessorUtil {
   }
 
   int getOverrideType(ExecutableElement element) {
-    GlideOption glideOption =
-        element.getAnnotation(GlideOption.class);
+    GlideOption glideOption = element.getAnnotation(GlideOption.class);
     return glideOption.override();
   }
 
@@ -114,7 +125,10 @@ final class ProcessorUtil {
   void writeClass(String packageName, TypeSpec clazz) {
     try {
       debugLog("Writing class:\n" + clazz);
-      JavaFile.builder(packageName, clazz).build().writeTo(processingEnv.getFiler());
+      JavaFile.builder(packageName, clazz)
+          .skipJavaLangImports(true)
+          .build()
+          .writeTo(processingEnv.getFiler());
     } catch (Throwable e) {
       throw new RuntimeException(e);
     }
@@ -124,8 +138,8 @@ final class ProcessorUtil {
       Set<String> classNames, Class<? extends Annotation> annotationClass) {
     List<ExecutableElement> result = new ArrayList<>();
     for (String glideExtensionClassName : classNames) {
-      TypeElement glideExtension = processingEnv.getElementUtils()
-          .getTypeElement(glideExtensionClassName);
+      TypeElement glideExtension =
+          processingEnv.getElementUtils().getTypeElement(glideExtensionClassName);
       for (Element element : glideExtension.getEnclosedElements()) {
         if (element.getAnnotation(annotationClass) != null) {
           result.add((ExecutableElement) element);
@@ -135,17 +149,17 @@ final class ProcessorUtil {
     return result;
   }
 
-  List<TypeElement> getElementsFor(
-      Class<? extends Annotation> clazz, RoundEnvironment env) {
+  List<TypeElement> getElementsFor(Class<? extends Annotation> clazz, RoundEnvironment env) {
     Collection<? extends Element> annotatedElements = env.getElementsAnnotatedWith(clazz);
     return ElementFilter.typesIn(annotatedElements);
   }
 
   /**
-   * Generates a Javadoc code block for generated methods that delegate to methods in
-   * {@link GlideExtension}s.
+   * Generates a Javadoc code block for generated methods that delegate to methods in {@link
+   * GlideExtension}s.
    *
    * <p>The generated block looks something like this:
+   *
    * <pre>
    * <code>
    *   {@literal @see} com.extension.package.name.ExtensionClassName#extensionMethod(arg1, argN)
@@ -153,7 +167,7 @@ final class ProcessorUtil {
    * </pre>
    *
    * @param method The method from the {@link GlideExtension} annotated class that the generated
-   * method this Javadoc will be attached to delegates to.
+   *     method this Javadoc will be attached to delegates to.
    */
   CodeBlock generateSeeMethodJavadoc(ExecutableElement method) {
     // Use the simple name of the containing type instead of just the containing type's TypeMirror
@@ -162,30 +176,38 @@ final class ProcessorUtil {
     // With this we get @see RequestOptions#methodName().
     // With just ClassName.get(element.getEnclosingElement().asType()), we get:
     // @see RequestOptions<CHILD>#methodName().
-    return generateSeeMethodJavadoc(getJavadocSafeName(method.getEnclosingElement()),
-        method.getSimpleName().toString(), method.getParameters());
+    return generateSeeMethodJavadoc(
+        getJavadocSafeName(method.getEnclosingElement()),
+        method.getSimpleName().toString(),
+        method.getParameters());
   }
 
   /**
    * Generates a Javadoc block for generated methods that delegate to other methods.
    *
    * <p>The generated block looks something like this:
+   *
    * <pre>
    * <code>
    *     {@literal @see} com.package.ClassContainingMethod.methodSimpleName(
    *         methodParam1, methodParamN)
    * </code>
    * </pre>
+   *
    * @param nameOfClassContainingMethod The simple class name of the class containing the method
-   * without any generic types like {@literal <T>}.
+   *     without any generic types like {@literal <T>}.
    * @param methodSimpleName The name of the method.
    * @param methodParameters A maybe empty list of all the parameters for the method in question.
    */
   CodeBlock generateSeeMethodJavadoc(
-      TypeName nameOfClassContainingMethod, String methodSimpleName,
+      TypeName nameOfClassContainingMethod,
+      String methodSimpleName,
       List<? extends VariableElement> methodParameters) {
-    return generateSeeMethodJavadocInternal(nameOfClassContainingMethod,
-        methodSimpleName, Lists.transform(methodParameters,
+    return generateSeeMethodJavadocInternal(
+        nameOfClassContainingMethod,
+        methodSimpleName,
+        Lists.transform(
+            methodParameters,
             new Function<VariableElement, Object>() {
               @Override
               public Object apply(VariableElement input) {
@@ -194,10 +216,12 @@ final class ProcessorUtil {
             }));
   }
 
-  CodeBlock generateSeeMethodJavadoc(
-      TypeName nameOfClassContainingMethod, MethodSpec methodSpec) {
-    return generateSeeMethodJavadocInternal(nameOfClassContainingMethod,
-        methodSpec.name, Lists.transform(methodSpec.parameters,
+  CodeBlock generateSeeMethodJavadoc(TypeName nameOfClassContainingMethod, MethodSpec methodSpec) {
+    return generateSeeMethodJavadocInternal(
+        nameOfClassContainingMethod,
+        methodSpec.name,
+        Lists.transform(
+            methodSpec.parameters,
             new Function<ParameterSpec, Object>() {
               @Override
               public Object apply(ParameterSpec input) {
@@ -207,8 +231,7 @@ final class ProcessorUtil {
   }
 
   private CodeBlock generateSeeMethodJavadocInternal(
-      TypeName nameOfClassContainingMethod, String methodName,
-      List<Object> safeParameterNames) {
+      TypeName nameOfClassContainingMethod, String methodName, List<Object> safeParameterNames) {
     StringBuilder javadocString = new StringBuilder("@see $T#$L(");
     List<Object> javadocArgs = new ArrayList<>();
     javadocArgs.add(nameOfClassContainingMethod);
@@ -228,8 +251,8 @@ final class ProcessorUtil {
   /**
    * Returns a safe String to use in a Javadoc that will function in a link.
    *
-   * <p>This method exists because by Javadoc doesn't handle type parameters({@literal <T>}
-   * in {@literal RequestOptions<T>} for example).
+   * <p>This method exists because by Javadoc doesn't handle type parameters({@literal <T>} in
+   * {@literal RequestOptions<T>} for example).
    */
   private TypeName getJavadocSafeName(Element element) {
     Types typeUtils = processingEnv.getTypeUtils();
@@ -252,31 +275,27 @@ final class ProcessorUtil {
     processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "[" + round + "] " + toLog);
   }
 
-  void warnLog(String toLog) {
-    processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, toLog);
-  }
-
   static CodeBlock generateCastingSuperCall(TypeName toReturn, MethodSpec method) {
     return CodeBlock.builder()
         .add("return ($T) super.$N(", toReturn, method.name)
         .add(
             FluentIterable.from(method.parameters)
-                .transform(new Function<ParameterSpec, String>() {
-                  @Override
-                  public String apply(ParameterSpec input) {
-                    return input.name;
-                  }
-                })
+                .transform(
+                    new Function<ParameterSpec, String>() {
+                      @Override
+                      public String apply(ParameterSpec input) {
+                        return input.name;
+                      }
+                    })
                 .join(Joiner.on(",")))
         .add(");\n")
         .build();
   }
 
-  static MethodSpec.Builder overriding(ExecutableElement method) {
+  MethodSpec.Builder overriding(ExecutableElement method) {
     String methodName = method.getSimpleName().toString();
 
-    MethodSpec.Builder builder = MethodSpec.methodBuilder(methodName)
-        .addAnnotation(Override.class);
+    MethodSpec.Builder builder = MethodSpec.methodBuilder(methodName).addAnnotation(Override.class);
 
     Set<Modifier> modifiers = method.getModifiers();
     modifiers = new LinkedHashSet<>(modifiers);
@@ -297,9 +316,11 @@ final class ProcessorUtil {
       builder = builder.addTypeVariable(TypeVariableName.get(var));
     }
 
-    builder = builder.returns(TypeName.get(method.getReturnType()))
-        .addParameters(getParameters(method))
-        .varargs(method.isVarArgs());
+    builder =
+        builder
+            .returns(TypeName.get(method.getReturnType()))
+            .addParameters(getParameters(method))
+            .varargs(method.isVarArgs());
 
     for (TypeMirror thrownType : method.getThrownTypes()) {
       builder = builder.addException(TypeName.get(thrownType));
@@ -308,11 +329,11 @@ final class ProcessorUtil {
     return builder;
   }
 
-  static List<ParameterSpec> getParameters(ExecutableElement method) {
+  List<ParameterSpec> getParameters(ExecutableElement method) {
     return getParameters(method.getParameters());
   }
 
-  static List<ParameterSpec> getParameters(List<? extends VariableElement> parameters) {
+  List<ParameterSpec> getParameters(List<? extends VariableElement> parameters) {
     List<ParameterSpec> result = new ArrayList<>();
     for (VariableElement parameter : parameters) {
       result.add(getParameter(parameter));
@@ -337,17 +358,18 @@ final class ProcessorUtil {
       parameters = new ArrayList<>();
       for (int i = 0; i < copy.size(); i++) {
         ParameterSpec parameter = copy.get(i);
-        parameters.add(ParameterSpec.builder(parameter.type, parameter.name + i)
-            .addModifiers(parameter.modifiers)
-            .addAnnotations(parameter.annotations)
-            .build());
+        parameters.add(
+            ParameterSpec.builder(parameter.type, parameter.name + i)
+                .addModifiers(parameter.modifiers)
+                .addAnnotations(parameter.annotations)
+                .build());
       }
     }
 
     return parameters;
   }
 
-  private static ParameterSpec getParameter(VariableElement parameter) {
+  private ParameterSpec getParameter(VariableElement parameter) {
     TypeName type = TypeName.get(parameter.asType());
     return ParameterSpec.builder(type, computeParameterName(parameter, type))
         .addModifiers(parameter.getModifiers())
@@ -400,8 +422,9 @@ final class ProcessorUtil {
         }
         rawClassName = rawClassName.substring(indexOfLastWordStart, rawClassName.length());
 
-        name = Character.toLowerCase(rawClassName.charAt(0))
-            + rawClassName.substring(1, rawClassName.length());
+        name =
+            Character.toLowerCase(rawClassName.charAt(0))
+                + rawClassName.substring(1, rawClassName.length());
       }
     }
 
@@ -430,20 +453,67 @@ final class ProcessorUtil {
     return name;
   }
 
-  private static List<AnnotationSpec> getAnnotations(VariableElement element) {
+  private List<AnnotationSpec> getAnnotations(VariableElement element) {
     List<AnnotationSpec> result = new ArrayList<>();
     for (AnnotationMirror mirror : element.getAnnotationMirrors()) {
-      result.add(AnnotationSpec.get(mirror));
+      result.add(maybeConvertSupportLibraryAnnotation(mirror));
     }
     return result;
   }
 
-  static ClassName nonNull() {
-    return NONNULL_ANNOTATION;
+  private AnnotationSpec maybeConvertSupportLibraryAnnotation(AnnotationMirror mirror) {
+    String annotationName = mirror.getAnnotationType().asElement().toString();
+    boolean preferAndroidX = visibleForTesting().equals(ANDROIDX_VISIBLE_FOR_TESTING);
+    ImmutableBiMap<ClassName, ClassName> map =
+        ImmutableBiMap.<ClassName, ClassName>builder()
+            .put(SUPPORT_NONNULL_ANNOTATION, ANDROIDX_NONNULL_ANNOTATION)
+            .put(SUPPORT_CHECK_RESULT_ANNOTATION, ANDROIDX_CHECK_RESULT_ANNOTATION)
+            .put(SUPPORT_VISIBLE_FOR_TESTING, ANDROIDX_VISIBLE_FOR_TESTING)
+            .build();
+
+    ClassName remapped = null;
+    if (preferAndroidX && annotationName.startsWith("android.support.annotation")) {
+      remapped = ClassName.get((TypeElement) mirror.getAnnotationType().asElement());
+    } else if (!preferAndroidX && annotationName.startsWith("androidx.annotation")) {
+      remapped = ClassName.get((TypeElement) mirror.getAnnotationType().asElement());
+    }
+    if (remapped != null && map.containsKey(remapped)) {
+      return AnnotationSpec.builder(map.get(remapped)).build();
+    } else {
+      return AnnotationSpec.get(mirror);
+    }
+  }
+
+  ClassName visibleForTesting() {
+    return findAnnotationClassName(ANDROIDX_VISIBLE_FOR_TESTING, SUPPORT_VISIBLE_FOR_TESTING);
+  }
+
+  ClassName nonNull() {
+    return findAnnotationClassName(ANDROIDX_NONNULL_ANNOTATION, SUPPORT_NONNULL_ANNOTATION);
+  }
+
+  ClassName checkResult() {
+    return findAnnotationClassName(
+        ANDROIDX_CHECK_RESULT_ANNOTATION, SUPPORT_CHECK_RESULT_ANNOTATION);
   }
 
   static List<ClassName> nonNulls() {
-    return Arrays.asList(NONNULL_ANNOTATION, JETBRAINS_NOTNULL_ANNOTATION);
+    return ImmutableList.of(
+        SUPPORT_NONNULL_ANNOTATION, JETBRAINS_NOTNULL_ANNOTATION, ANDROIDX_NONNULL_ANNOTATION);
+  }
+
+  private ClassName findAnnotationClassName(ClassName androidxName, ClassName supportName) {
+    if (REQUIRE_SUPPORT_ANNOTATIONS) {
+      return supportName;
+    }
+    Elements elements = processingEnv.getElementUtils();
+    TypeElement visibleForTestingTypeElement =
+        elements.getTypeElement(androidxName.reflectionName());
+    if (visibleForTestingTypeElement != null) {
+      return androidxName;
+    }
+
+    return supportName;
   }
 
   List<ExecutableElement> findInstanceMethodsReturning(TypeElement clazz, TypeMirror returnType) {
@@ -496,7 +566,9 @@ final class ProcessorUtil {
       if (excludedModuleAnnotationValue == null
           || excludedModuleAnnotationValue instanceof Attribute.UnresolvedClass) {
         throw new IllegalArgumentException(
-            "Failed to find value for: " + annotationClass + " from mirrors: "
+            "Failed to find value for: "
+                + annotationClass
+                + " from mirrors: "
                 + clazz.getAnnotationMirrors());
       }
     }
@@ -522,14 +594,16 @@ final class ProcessorUtil {
   private static String getExcludedModuleClassFromAnnotationAttribute(
       Element clazz, Object attribute) {
     if (attribute.getClass().getSimpleName().equals("UnresolvedClass")) {
-      throw new IllegalArgumentException("Failed to parse @Excludes for: " + clazz
-          + ", one or more excluded Modules could not be found at compile time. Ensure that all"
-          + "excluded Modules are included in your classpath.");
+      throw new IllegalArgumentException(
+          "Failed to parse @Excludes for: "
+              + clazz
+              + ", one or more excluded Modules could not be found at compile time. Ensure that all"
+              + "excluded Modules are included in your classpath.");
     }
     Method[] methods = attribute.getClass().getDeclaredMethods();
     if (methods == null || methods.length == 0) {
-      throw new IllegalArgumentException("Failed to parse @Excludes for: " + clazz
-          + ", invalid exclude: " + attribute);
+      throw new IllegalArgumentException(
+          "Failed to parse @Excludes for: " + clazz + ", invalid exclude: " + attribute);
     }
     for (Method method : methods) {
       if (method.getName().equals("getValue")) {
@@ -549,8 +623,7 @@ final class ProcessorUtil {
   }
 
   private final class FilterPublicMethods implements Predicate<Element> {
-    @Nullable
-    private final TypeMirror returnType;
+    @Nullable private final TypeMirror returnType;
     private final MethodType methodType;
 
     FilterPublicMethods(@Nullable TypeMirror returnType, MethodType methodType) {
@@ -586,8 +659,7 @@ final class ProcessorUtil {
 
   private boolean isReturnValueTypeMatching(
       ExecutableElement method, TypeMirror expectedReturnType) {
-    return processingEnv.getTypeUtils().isAssignable(
-        method.getReturnType(), expectedReturnType);
+    return processingEnv.getTypeUtils().isAssignable(method.getReturnType(), expectedReturnType);
   }
 
   private static final class ToMethod implements Function<Element, ExecutableElement> {
@@ -598,5 +670,4 @@ final class ProcessorUtil {
       return (ExecutableElement) input;
     }
   }
-
 }

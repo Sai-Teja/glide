@@ -1,6 +1,8 @@
 package com.bumptech.glide.load.engine;
 
-import android.support.annotation.NonNull;
+import static org.junit.Assert.assertThrows;
+
+import androidx.annotation.NonNull;
 import com.bumptech.glide.load.Key;
 import com.bumptech.glide.load.Option;
 import com.bumptech.glide.load.Option.CacheKeyUpdater;
@@ -12,9 +14,8 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Collections;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.ExpectedException;
+import org.junit.function.ThrowingRunnable;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
@@ -22,9 +23,8 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
 @RunWith(RobolectricTestRunner.class)
-@Config(manifest = Config.NONE, sdk = 18)
+@Config(sdk = 18)
 public class EngineKeyTest {
-  @Rule public final ExpectedException expectedException = ExpectedException.none();
   @Mock private Transformation<Object> transformation;
 
   @Before
@@ -35,17 +35,24 @@ public class EngineKeyTest {
   @Test
   public void updateDiskCacheKey_throwsException() throws NoSuchAlgorithmException {
     // If this test fails, update testEqualsAndHashcode to use KeyTester including regression tests.
-    EngineKey key = new EngineKey(
-        "id",
-        new ObjectKey("signature"),
-        100,
-        100,
-        Collections.<Class<?>, Transformation<?>>emptyMap(),
-        Object.class,
-        Object.class,
-        new Options());
-    expectedException.expect(UnsupportedOperationException.class);
-    key.updateDiskCacheKey(MessageDigest.getInstance("SHA-1"));
+    final EngineKey key =
+        new EngineKey(
+            "id",
+            new ObjectKey("signature"),
+            100,
+            100,
+            Collections.<Class<?>, Transformation<?>>emptyMap(),
+            Object.class,
+            Object.class,
+            new Options());
+    assertThrows(
+        UnsupportedOperationException.class,
+        new ThrowingRunnable() {
+          @Override
+          public void run() throws NoSuchAlgorithmException {
+            key.updateDiskCacheKey(MessageDigest.getInstance("SHA-1"));
+          }
+        });
   }
 
   @Test
@@ -54,15 +61,20 @@ public class EngineKeyTest {
     memoryOptions.set(Option.memory("key", new Object()), new Object());
 
     Options diskOptions = new Options();
-    diskOptions.set(Option.disk("key", new CacheKeyUpdater<String>() {
-      @Override
-      public void update(@NonNull byte[] keyBytes, @NonNull String value,
-          @NonNull MessageDigest messageDigest) {
-        messageDigest.update(keyBytes);
-        messageDigest.update(value.getBytes(Key.CHARSET));
-
-      }
-    }), "value");
+    diskOptions.set(
+        Option.disk(
+            "key",
+            new CacheKeyUpdater<String>() {
+              @Override
+              public void update(
+                  @NonNull byte[] keyBytes,
+                  @NonNull String value,
+                  @NonNull MessageDigest messageDigest) {
+                messageDigest.update(keyBytes);
+                messageDigest.update(value.getBytes(Key.CHARSET));
+              }
+            }),
+        "value");
 
     new EqualsTester()
         .addEqualityGroup(
